@@ -19,6 +19,26 @@ func Test_parseRuntimeInfo(t *testing.T) {
 		wantErr     bool
 	}{
 		{
+			name: "Parses InputParameters Correctly",
+			jsonEncoded: `{
+				"inputParameters": {
+					"my_param": {
+						"parameterType": "INT",
+						"parameterValue": "123"
+					}
+				}
+			}`,
+			want: &runtimeInfo{
+				InputParameters: map[string]*inputParameter{
+					"my_param": {
+						ParameterType:  "INT",
+						ParameterValue: "123",
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
 			name: "Parses OutputParameters Correctly",
 			jsonEncoded: `{
 				"outputParameters": {

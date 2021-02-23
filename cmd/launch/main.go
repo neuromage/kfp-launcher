@@ -11,15 +11,13 @@ import (
 var (
 	mlmdServerAddress = flag.String("mlmd_server_address", "", "")
 	mlmdServerPort    = flag.String("mlmd_server_port", "8080", "")
-	annotationsFile   = flag.String("annotations_file", "/kfp-v2/task_spec", "")
-	taskSpecJSON      = flag.String("task_spec_json", "", "")
-	componentSpecJSON = flag.String("component_spec_json", "", "")
+	runtimeInfoJSON   = flag.String("runtime_info_json", "", "")
+	containerImage    = flag.String("container_image", "", "")
 	taskName          = flag.String("task_name", "", "")
 	pipelineName      = flag.String("pipeline_name", "", "")
 	pipelineRunID     = flag.String("pipeline_run_id", "", "")
 	pipelineTaskID    = flag.String("pipeline_task_id", "", "")
 	pipelineRoot      = flag.String("pipeline_root", "", "")
-	runtimeInfoJSON   = flag.String("runtime_info_json", "", "")
 )
 
 // func parseTaskSpecJSON(s string) (*specPb.PipelineTaskSpec, error) {
@@ -58,6 +56,7 @@ func main() {
 		PipelineTaskID:    *pipelineTaskID,
 		PipelineRoot:      *pipelineRoot,
 		TaskName:          *taskName,
+		ContainerImage:    *containerImage,
 		MLMDServerAddress: *mlmdServerAddress,
 		MLMDServerPort:    *mlmdServerPort,
 	}

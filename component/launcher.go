@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/davecgh/go-spew/spew"
@@ -37,6 +38,7 @@ type LauncherOptions struct {
 	PipelineRunID     string
 	PipelineTaskID    string
 	TaskName          string
+	ContainerImage    string
 	MLMDServerAddress string
 	MLMDServerPort    string
 }
@@ -145,7 +147,7 @@ func NewLauncher(runtimeInfo string, options *LauncherOptions) (*Launcher, error
 	// Placeholder replacements.
 	pr := make(map[string]string)
 
-	metadata, err := metadata.NewClient(options.MLMDServerAddress, options.MLMDServerPort, options.PipelineName, options.PipelineRunID)
+	metadata, err := metadata.NewClient(options.MLMDServerAddress, options.MLMDServerPort)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +224,7 @@ func (l *Launcher) prepareInputs(ctx context.Context) error {
 	// Prepare input parameter placeholders.
 	for k, v := range l.runtimeInfo.InputParameters {
 		key := fmt.Sprintf(`{{$.inputs.parameters['%s']}}`, k)
-		l.placeholderReplacements[key] = string(v)
+		l.placeholderReplacements[key] = v.ParameterValue
 	}
 
 	return nil
@@ -273,6 +275,47 @@ func (l *Launcher) RunComponent(ctx context.Context, cmd string, args ...string)
 		}
 	}
 
+	// Record Execution in MLMD.
+	pipeline, err := l.metadata.GetPipeline(ctx, l.options.PipelineName, l.options.PipelineRunID)
+	if err != nil {
+		return err
+	}
+
+	ecfg := &metadata.ExecutionConfig{
+		InputParameters: &metadata.Parameters{
+			IntParameters:    make(map[string]int64),
+			StringParameters: make(map[string]string),
+			DoubleParameters: make(map[string]float64),
+		},
+	}
+	for _, ia := range l.runtimeInfo.InputArtifacts {
+		ecfg.InputArtifacts = append(ecfg.InputArtifacts, &metadata.InputArtifact{Artifact: ia.Artifact})
+	}
+
+	for n, ip := range l.runtimeInfo.InputParameters {
+		switch ip.ParameterType {
+		case "STRING":
+			ecfg.InputParameters.StringParameters[n] = ip.ParameterValue
+		case "INT":
+			i, err := strconv.ParseInt(ip.ParameterValue, 10, 0)
+			if err != nil {
+				return err
+			}
+			ecfg.InputParameters.IntParameters[n] = i
+		case "DOUBLE":
+			f, err := strconv.ParseFloat(ip.ParameterValue, 0)
+			if err != nil {
+				return err
+			}
+			ecfg.InputParameters.DoubleParameters[n] = f
+		}
+	}
+
+	execution, err := l.metadata.CreateExecution(ctx, pipeline, l.options.TaskName, l.options.PipelineTaskID, l.options.ContainerImage, ecfg)
+	if err != nil {
+		return err
+	}
+
 	executor := exec.Command(cmd, args...)
 
 	fmt.Println("Running command: ")
@@ -292,6 +335,7 @@ func (l *Launcher) RunComponent(ctx context.Context, cmd string, args ...string)
 	defer bucket.Close()
 
 	// Register artifacts with MLMD.
+	outputArtifacts := make([]*metadata.OutputArtifact, 0, len(l.runtimeInfo.OutputArtifacts))
 	for _, v := range l.runtimeInfo.OutputArtifacts {
 		var err error
 		artifact := &pb.Artifact{
@@ -302,6 +346,7 @@ func (l *Launcher) RunComponent(ctx context.Context, cmd string, args ...string)
 		if err != nil {
 			return err
 		}
+		outputArtifacts = append(outputArtifacts, &metadata.OutputArtifact{Artifact: artifact, Schema: v.ArtifactSchema})
 
 		if err := os.MkdirAll(path.Dir(v.FileOutputPath), 0644); err != nil {
 			return err
@@ -342,5 +387,36 @@ func (l *Launcher) RunComponent(ctx context.Context, cmd string, args ...string)
 		}
 	}
 
-	return nil
+	// Read output parameters.
+	outputParameters := &metadata.Parameters{
+		IntParameters:    make(map[string]int64),
+		StringParameters: make(map[string]string),
+		DoubleParameters: make(map[string]float64),
+	}
+
+	for n, op := range l.runtimeInfo.OutputParameters {
+		b, err := ioutil.ReadFile(op.FileOutputPath)
+		if err != nil {
+			return err
+		}
+		switch op.ParameterType {
+		case "STRING":
+			outputParameters.StringParameters[n] = string(b)
+		case "INT":
+			i, err := strconv.ParseInt(string(b), 10, 0)
+			if err != nil {
+				return err
+			}
+			outputParameters.IntParameters[n] = i
+		case "DOUBLE":
+			f, err := strconv.ParseFloat(string(b), 0)
+			if err != nil {
+				return err
+			}
+			outputParameters.DoubleParameters[n] = f
+		}
+
+	}
+
+	return l.metadata.PublishExecution(ctx, execution, outputParameters, outputArtifacts)
 }

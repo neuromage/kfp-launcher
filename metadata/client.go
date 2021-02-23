@@ -18,9 +18,11 @@ import (
 const (
 	pipelineContextTypeName    = "kfp.Pipeline"
 	pipelineRunContextTypeName = "kfp.PipelineRun"
+	containerExecutionTypeName = "kfp.ContainerExecution"
 )
 
 var (
+	// Note: All types are schemaless so we can easily evolve the types as needed.
 	pipelineContextType = &pb.ContextType{
 		Name: proto.String(pipelineContextTypeName),
 	}
@@ -28,51 +30,201 @@ var (
 	pipelineRunContextType = &pb.ContextType{
 		Name: proto.String(pipelineRunContextTypeName),
 	}
+
+	containerExecutionType = &pb.ExecutionType{
+		Name: proto.String(containerExecutionTypeName),
+	}
 )
 
 // Client is ..
 type Client struct {
-	svc           pb.MetadataStoreServiceClient
-	pipelineName  string
-	pipelineRunID string
-
-	pipelineContext    *pb.Context
-	pipelineRunContext *pb.Context
-
-	initialized bool
+	svc pb.MetadataStoreServiceClient
 }
 
 // NewClient ...
-func NewClient(serverAddress, serverPort, pipelineName, pipelineRunID string) (*Client, error) {
+func NewClient(serverAddress, serverPort string) (*Client, error) {
 	conn, err := grpc.Dial(fmt.Sprintf("%s:%s", serverAddress, serverPort), grpc.WithInsecure())
 	if err != nil {
 		return nil, err
 	}
 
 	return &Client{
-		svc:           pb.NewMetadataStoreServiceClient(conn),
-		pipelineName:  pipelineName,
-		pipelineRunID: pipelineRunID,
+		svc: pb.NewMetadataStoreServiceClient(conn),
 	}, nil
 }
 
-// Init ...
-func (c *Client) Init(ctx context.Context) error {
-	var err error
-	c.pipelineContext, err = getOrInsertContext(ctx, c.svc, c.pipelineName, pipelineContextType)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Got pipeline context:\n%+v\n", c.pipelineContext)
+type Parameters struct {
+	IntParameters    map[string]int64
+	StringParameters map[string]string
+	DoubleParameters map[string]float64
+}
 
-	c.pipelineRunContext, err = getOrInsertContext(ctx, c.svc, c.pipelineRunID, pipelineRunContextType)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Got pipeline run context:\n%+v\n", c.pipelineRunContext)
+type ExecutionConfig struct {
+	InputParameters *Parameters
+	InputArtifacts  []*InputArtifact
+}
 
-	c.initialized = true
-	return nil
+type InputArtifact struct {
+	Artifact *pb.Artifact
+}
+type OutputArtifact struct {
+	Artifact *pb.Artifact
+	Schema   string
+}
+
+type Pipeline struct {
+	pipelineCtx    *pb.Context
+	pipelineRunCtx *pb.Context
+}
+
+type Execution struct {
+	execution *pb.Execution
+	pipeline  *Pipeline
+}
+
+func (c *Client) GetPipeline(ctx context.Context, pipelineName string, pipelineRunID string) (*Pipeline, error) {
+	pipelineContext, err := getOrInsertContext(ctx, c.svc, pipelineName, pipelineContextType)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("Got pipeline context:\n%+v\n", pipelineContext)
+
+	pipelineRunContext, err := getOrInsertContext(ctx, c.svc, pipelineRunID, pipelineRunContextType)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("Got pipeline run context:\n%+v\n", pipelineRunContext)
+
+	return &Pipeline{
+		pipelineCtx:    pipelineContext,
+		pipelineRunCtx: pipelineRunContext,
+	}, nil
+
+}
+
+func (c *Client) getContainerExecutionTypeID(ctx context.Context) (int64, error) {
+	eType, err := c.svc.PutExecutionType(ctx, &pb.PutExecutionTypeRequest{
+		ExecutionType: containerExecutionType,
+	})
+
+	if err != nil {
+		return 0, err
+	}
+
+	return eType.GetTypeId(), nil
+}
+
+func stringValue(s string) *pb.Value {
+	return &pb.Value{Value: &pb.Value_StringValue{StringValue: s}}
+}
+
+func intValue(i int64) *pb.Value {
+	return &pb.Value{Value: &pb.Value_IntValue{IntValue: i}}
+}
+
+func doubleValue(f float64) *pb.Value {
+	return &pb.Value{Value: &pb.Value_DoubleValue{DoubleValue: f}}
+}
+
+func (c *Client) PublishExecution(ctx context.Context, execution *Execution, outputParameters *Parameters, outputArtifacts []*OutputArtifact) error {
+	e := execution.execution
+	e.LastKnownState = pb.Execution_COMPLETE.Enum()
+
+	// Record output parameters.
+	for n, p := range outputParameters.IntParameters {
+		e.CustomProperties["output:"+n] = intValue(p)
+	}
+	for n, p := range outputParameters.DoubleParameters {
+		e.CustomProperties["output:"+n] = doubleValue(p)
+	}
+	for n, p := range outputParameters.StringParameters {
+		e.CustomProperties["output:"+n] = stringValue(p)
+	}
+
+	req := &pb.PutExecutionRequest{
+		Execution: e,
+		Contexts:  []*pb.Context{execution.pipeline.pipelineCtx, execution.pipeline.pipelineRunCtx},
+	}
+
+	for _, oa := range outputArtifacts {
+		aePair := &pb.PutExecutionRequest_ArtifactAndEvent{
+			Event: &pb.Event{
+				Type:       pb.Event_OUTPUT.Enum(),
+				ArtifactId: oa.Artifact.Id,
+			},
+		}
+		req.ArtifactEventPairs = append(req.ArtifactEventPairs, aePair)
+	}
+
+	_, err := c.svc.PutExecution(ctx, req)
+	return err
+}
+
+func (c *Client) CreateExecution(ctx context.Context, pipeline *Pipeline, taskName, taskID, containerImage string, config *ExecutionConfig) (*Execution, error) {
+	typeID, err := c.getContainerExecutionTypeID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	e := &pb.Execution{
+		TypeId: &typeID,
+		CustomProperties: map[string]*pb.Value{
+			"task_name":       stringValue(taskName),
+			"pipeline_name":   stringValue(*pipeline.pipelineCtx.Name),
+			"pipeline_run_id": stringValue(*pipeline.pipelineRunCtx.Name),
+			"kfp_pod_name":    stringValue(taskID),
+			"container_image": stringValue(containerImage),
+		},
+		LastKnownState: pb.Execution_RUNNING.Enum(),
+	}
+
+	for k, v := range config.InputParameters.StringParameters {
+		e.CustomProperties["input:"+k] = stringValue(v)
+	}
+	for k, v := range config.InputParameters.IntParameters {
+		e.CustomProperties["input:"+k] = intValue(v)
+	}
+	for k, v := range config.InputParameters.DoubleParameters {
+		e.CustomProperties["input:"+k] = doubleValue(v)
+	}
+
+	req := &pb.PutExecutionRequest{
+		Execution: e,
+		Contexts:  []*pb.Context{pipeline.pipelineCtx, pipeline.pipelineRunCtx},
+	}
+
+	for _, ia := range config.InputArtifacts {
+		aePair := &pb.PutExecutionRequest_ArtifactAndEvent{
+			Event: &pb.Event{
+				Type:       pb.Event_INPUT.Enum(),
+				ArtifactId: ia.Artifact.Id,
+			},
+		}
+		req.ArtifactEventPairs = append(req.ArtifactEventPairs, aePair)
+	}
+
+	res, err := c.svc.PutExecution(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	getReq := &pb.GetExecutionsByIDRequest{
+		ExecutionIds: []int64{res.GetExecutionId()},
+	}
+
+	getRes, err := c.svc.GetExecutionsByID(ctx, getReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(getRes.Executions) != 1 {
+		return nil, fmt.Errorf("Expected to get one Execution, got %d instead. Request: %v", len(getRes.Executions), getReq)
+	}
+
+	return &Execution{
+		pipeline:  pipeline,
+		execution: getRes.Executions[0],
+	}, nil
 }
 
 // GetArtifacts ...

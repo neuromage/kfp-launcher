@@ -9,7 +9,10 @@ import (
 	pb "github.com/neuromage/kfp-launcher/third_party/ml_metadata"
 )
 
-type inputParameter string
+type inputParameter struct {
+	ParameterType  string
+	ParameterValue string
+}
 
 type inputArtifact struct {
 	// Where to read MLMD artifact. File is passed using Argo artifacts.
@@ -43,16 +46,16 @@ type outputArtifact struct {
 }
 
 type runtimeInfo struct {
-	InputParameters  map[string]inputParameter
-	InputArtifacts   map[string]inputArtifact
+	InputParameters  map[string]*inputParameter
+	InputArtifacts   map[string]*inputArtifact
 	OutputParameters map[string]*outputParameter
 	OutputArtifacts  map[string]*outputArtifact
 }
 
 func parseRuntimeInfo(jsonEncoded string) (*runtimeInfo, error) {
 	r := &runtimeInfo{
-		InputParameters:  make(map[string]inputParameter),
-		InputArtifacts:   make(map[string]inputArtifact),
+		InputParameters:  make(map[string]*inputParameter),
+		InputArtifacts:   make(map[string]*inputArtifact),
 		OutputParameters: make(map[string]*outputParameter),
 		OutputArtifacts:  make(map[string]*outputArtifact),
 	}
