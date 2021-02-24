@@ -20,26 +20,6 @@ var (
 	pipelineRoot      = flag.String("pipeline_root", "", "")
 )
 
-// func parseTaskSpecJSON(s string) (*specPb.PipelineTaskSpec, error) {
-// 	res := &specPb.PipelineTaskSpec{}
-
-// 	if err := protojson.Unmarshal([]byte(s), res); err != nil {
-// 		return nil, err
-// 	}
-// 	fmt.Printf("GOT TaskSpec:\n%s\n", res)
-// 	return res, nil
-// }
-
-// func parseComponentSpecJSON(s string) (*specPb.ComponentSpec, error) {
-// 	res := &specPb.ComponentSpec{}
-
-// 	if err := protojson.Unmarshal([]byte(s), res); err != nil {
-// 		return nil, err
-// 	}
-// 	fmt.Printf("GOT ComponentSpec:\n%s\n", res)
-// 	return res, nil
-// }
-
 func check(err error) {
 	if err != nil {
 		glog.Fatalf("CHECK-fail: %s", err)
@@ -64,67 +44,4 @@ func main() {
 	check(err)
 
 	check(launcher.RunComponent(ctx, flag.Args()[0], flag.Args()[1:]...))
-
-	// conn, err := grpc.Dial(fmt.Sprintf("%s:%s", *mlmdServerAddress, *mlmdServerPort), grpc.WithInsecure())
-	// check(err)
-
-	// cli := pb.NewMetadataStoreServiceClient(conn)
-
-	// taskSpec, err := parseTaskSpecJSON(*taskSpecJSON)
-	// check(err)
-
-	// componentSpec, err := parseComponentSpecJSON(*componentSpecJSON)
-	// check(err)
-
-	// runtimeInfo, err := parseRuntimeInfo(*runtimeInfoJSON)
-	// check(err)
-	// spew.Dump(runtimeInfo)
-
-	// m := metadataClient{
-	// 	cli: cli,
-	// 	// taskSpec:      taskSpec,
-	// 	// componentSpec: componentSpec,
-	// 	pipelineName:  *pipelineName,
-	// 	pipelineRunID: *pipelineRunID,
-	// 	runtimeInfo:   runtimeInfo,
-	// }
-
-	// req := &pb.GetContextsRequest{}
-	// res, err := cli.GetContexts(context.Background(), req)
-	// fmt.Printf("Contexts response:\n%+v\n\n", res)
-	// req2 := &pb.GetContextTypesRequest{}
-	// res2, err := cli.GetContextTypes(context.Background(), req2)
-	// fmt.Printf("ContextTypes response:\n%+v\n\n", res2)
-	// check(err)
-
-	// dat, err := ioutil.ReadFile("/kfp-v2/task_spec")
-	// check(err)
-	// fmt.Printf("Data\n%s\n\n", dat)
-
-	// job := parsePipelineJob()
-	// fmt.Printf("PipelineJob:\n %v\n", job)
-
 }
-
-// func parsePipelineJob() *specPb.PipelineJob {
-// 	res := &specPb.PipelineJob{}
-
-//   f, err := os.Open(*annotationsFile)
-// 	check(err)
-// 	scanner := bufio.NewScanner(f)
-// 	scanner.Split(bufio.ScanLines)
-
-// 	for scanner.Scan() {
-// 		l := scanner.Text()
-// 		tokens := strings.SplitN(l, "=", 2)
-// 		fmt.Println(tokens[0])
-
-// 		if tokens[0]  == "pipelines.kubeflow.org/v2_task_spec" {
-// 			val, err := strconv.Unquote(tokens[1])
-// 			check(err)
-// 			check(protojson.Unmarshal([]byte(val), res))
-// 		}
-// 	}
-
-// 	return res
-// }
